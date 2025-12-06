@@ -1,5 +1,8 @@
-﻿#if MONOANDROID
+#if MONOANDROID
 using PlatformView = Android.Views.View;
+using AndroidX.Activity;
+using Android.App;
+using Microsoft.Maui.ApplicationModel;
 #elif __IOS__ || MACCATALYST
 using PlatformView = UIKit.UIView;
 #elif WINDOWS
@@ -26,6 +29,13 @@ namespace Syncfusion.Maui.Toolkit.Internals
 		readonly Dictionary<PlatformView, PositionDetails> _positionDetails;
 		WindowOverlayContainer? _overlayStackView;
 
+		// Android-specific back handling: owner assigns a handler that should return true if it handles back press.
+		internal Func<bool>? AndroidBackPressedHandler;
+
+	#if MONOANDROID
+		AndroidX.Activity.OnBackPressedCallback? _backPressedCallback;
+	#endif
+
 		#endregion
 
 		#region Constructor
@@ -51,6 +61,11 @@ namespace Syncfusion.Maui.Toolkit.Internals
 			{
 				_window = WindowOverlayHelper._window;
 				Initialize();
+
+	#if MONOANDROID
+				// Register Android back callback when overlay is added to window
+				RegisterAndroidBackCallback();
+	#endif
 			}
 		}
 
@@ -58,10 +73,75 @@ namespace Syncfusion.Maui.Toolkit.Internals
 		{
 			_overlayStackView = view;
 		}
-
+		
 		#endregion
 
 		#region Private Methods
+
+	#if MONOANDROID
+		void RegisterAndroidBackCallback()
+		{
+			try
+			{
+				// Use MAUI's Platform.CurrentActivity to get the current activity
+				var activity = Platform.CurrentActivity as Activity;
+				if (activity is null)
+					return;
+
+				// Already registered
+				if (_backPressedCallback != null)
+					return;
+
+				_backPressedCallback = new OverlayBackPressedCallback(this, activity);
+				activity.OnBackPressedDispatcher.AddCallback(_backPressedCallback);
+			}
+			catch
+			{
+				// swallow failures to avoid breaking platforms where registration isn't possible
+			}
+		}
+
+		// internal helper to let the callback call the owner handler
+		internal bool InvokeAndroidBackHandler()
+		{
+			try
+			{
+				return AndroidBackPressedHandler?.Invoke() ?? false;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		// Subclass OnBackPressedCallback and route to overlay's handler.
+		class OverlayBackPressedCallback : OnBackPressedCallback
+		{
+			readonly SfWindowOverlay _owner;
+			readonly Activity _activity;
+
+			public OverlayBackPressedCallback(SfWindowOverlay owner, Activity activity) : base(true)
+			{
+				_owner = owner;
+				_activity = activity;
+			}
+			
+			public override void HandleOnBackPressed()
+			{
+				bool handled = _owner.InvokeAndroidBackHandler();
+
+				if (!handled)
+				{
+					// Not handled by overlay/popup — let the system handle it.
+					// Temporarily disable this callback and call default back, avoiding recursion.
+					this.Enabled = false;
+					_activity.OnBackPressed();
+					this.Enabled = true;
+				}
+				// If handled, we simply return (consume the back).
+			}
+		}
+	#endif
 
 		/// <summary>
 		/// Calculates a new absolute position based on the given alignment and size.
@@ -167,15 +247,15 @@ namespace Syncfusion.Maui.Toolkit.Internals
 		#region Properties
 
 		internal PlatformView? Relative { get; set; }
-
+		
 		internal float X { get; set; }
-
+		
 		internal float Y { get; set; }
-
+		
 		internal WindowOverlayHorizontalAlignment HorizontalAlignment { get; set; }
-
+		
 		internal WindowOverlayVerticalAlignment VerticalAlignment { get; set; }
-
+		
 		#endregion
 	}
 }
